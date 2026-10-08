@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Run AI Sign Language Desktop (main.py)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Run Web Exhibition Dashboard (dashboard_app.py)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/dashboard_app.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "name": "Python: Run Phone USB Camera Mode (phone_cam_recognition.py)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/phone_cam_recognition.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
