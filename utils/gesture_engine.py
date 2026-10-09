@@ -77,30 +77,6 @@ class HandMotionTracker:
 
         return False, 0.0
 
-    def detect_vertical_motion(self) -> Tuple[bool, float]:
-        """
-        Detects repetitive vertical motion (e.g. Eat vs Food).
-        Returns (is_moving, intensity_score).
-        """
-        if len(self.wrist_history) < 10:
-            return False, 0.0
-
-        ys = [pt[1] for pt in self.wrist_history]
-        dys = np.diff(ys)
-
-        sign_changes = 0
-        for i in range(len(dys) - 1):
-            if dys[i] * dys[i + 1] < -1e-5 and abs(dys[i]) > 0.008:
-                sign_changes += 1
-
-        total_span_y = max(ys) - min(ys)
-
-        if sign_changes >= 2 and total_span_y > 0.05:
-            score = min(1.0, (sign_changes / 3.0) * (total_span_y / 0.10))
-            return True, score
-
-        return False, 0.0
-
 
 class GestureEngine:
     """
@@ -377,15 +353,6 @@ class GestureEngine:
                 ml_gesture = None
                 ml_conf = 0.0
 
-        # Motion-based overrides for similar static gestures
-        if ml_gesture == "FOOD":
-            is_vert, v_score = self.motion_tracker.detect_vertical_motion()
-            if is_vert:
-                ml_gesture = "EAT"
-                is_dynamic = True
-                ml_conf = max(ml_conf, 0.85 + (0.1 * v_score))
-                print(f"[DYNAMIC] Overriding FOOD with EAT (vert_score: {v_score:.2f})")
-
         infer_ms = (time.perf_counter() - t_start) * 1000
         self.last_inference_ms = infer_ms
 
@@ -658,4 +625,26 @@ class GestureEngine:
             "gesture_name": stable_gest,
             "class_id": hand_res.get("class_id", -1),
             "raw_prediction": hand_res.get("raw_prediction", unknown_str),
-            "raw_confidence": hand
+            "raw_confidence": hand_res.get("raw_confidence", 0.0),
+            "raw_gesture": hand_res.get("raw_prediction", unknown_str),
+            "stable_gesture": stable_gest,
+            "confirmed_gesture": stable_gest,
+            "confidence": conf,
+            "confidence_tier": tier,
+            "is_confident": conf >= self.medium_threshold,
+            "status": hand_res.get("status", "Stable"),
+            "category": hand_res.get("category", "Sign Language"),
+            "motion_type": hand_res.get("motion_type", "STATIC GESTURE"),
+            "meaning": hand_res.get("meaning", ""),
+            "english": hand_res.get("english", stable_gest),
+            "kannada": hand_res.get("kannada", ""),
+            "kannada_translit": hand_res.get("kannada_translit", ""),
+            "spoken_phrase": hand_res.get("speech", stable_gest),
+            "is_emergency": hand_res.get("is_emergency", False),
+            "detected_hand_count": len(detected_hands),
+            "is_new_confirmation": is_new,
+            "hands_info": hands_info,
+            "inference_ms": hand_res.get("inference_ms", self.last_inference_ms),
+            "latency_sec": latency_sec
+        }
+

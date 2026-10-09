@@ -20,7 +20,9 @@ export default function Recognition() {
     "STOP": "✋", "WAIT": "✋", "YES": "✊", "NO": "🙅", "THANK YOU": "🙏",
     "PLEASE": "🤲", "SORRY": "🥺", "WELCOME": "🤗", "WATER": "💧", "EAT": "🍽️",
     "SLEEP": "😴", "HOME": "🏠", "COME HERE": "👋", "DANGER": "⚠️", "VICTORY": "✌️",
-    "ROCK ON": "🤘", "POINT": "☝️", "PEACE": "✌️"
+    "ROCK ON": "🤘", "POINT": "☝️", "PEACE": "✌️", "OK": "👌", "GOOD MORNING": "🌅",
+    "HOSPITAL": "🏥", "POLICE": "👮", "SCHOOL": "🏫", "THANKS": "🙏", "THUMBS DOWN": "👎",
+    "WAVE": "👋", "YOU": "🫵"
   };
   
   const [prediction, setPrediction] = useState({
@@ -371,11 +373,13 @@ export default function Recognition() {
           
           <div className="my-6 text-center">
             <div className="text-sm text-gray-500 mb-1">GESTURE</div>
-            <div className={`text-4xl font-black transition-opacity duration-300 ${prediction.gesture_name && prediction.gesture_name !== "No hand detected" && prediction.gesture_name !== "Hold gesture steady" ? "text-white glow-text" : "text-gray-600"}`}>
-              {prediction.gesture_name || prediction.gesture || "No hand detected"}
+            <div className={`text-4xl font-black transition-opacity duration-300 ${prediction.gesture_name && prediction.gesture_name !== "No hand detected" && prediction.gesture_name !== "Hold gesture steady" && prediction.gesture_name !== "Detecting..." ? "text-white glow-text" : "text-gray-600"}`}>
+              {(!prediction.gesture_name || prediction.gesture_name === "No hand detected" || prediction.gesture_name === "Detecting...") 
+                ? "🔎 No gesture detected — show a supported hand pose." 
+                : prediction.gesture_name}
             </div>
             
-            {prediction.kannada && (
+            {prediction.kannada && prediction.gesture_name !== "No hand detected" && (
               <div className="text-xl text-emerald-400 mt-2 font-bold">{prediction.kannada}</div>
             )}
             
