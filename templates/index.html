@@ -2957,12 +2957,12 @@
       }
 
       if (typeof cid === "number" && cid >= 0) {
-        // If 12-class model or index matches 12-class set (where classIndex = 2 -> HELLO)
-        if (CLASS_ID_TO_GESTURE_MAP_12[cid]) {
-          return CLASS_ID_TO_GESTURE_MAP_12[cid];
-        }
-        if (CLASS_ID_TO_GESTURE_MAP_42[cid]) {
+        // Prioritize active 42-class model mapping
+        if (CLASS_ID_TO_GESTURE_MAP_42 && CLASS_ID_TO_GESTURE_MAP_42[cid]) {
           return CLASS_ID_TO_GESTURE_MAP_42[cid];
+        }
+        if (CLASS_ID_TO_GESTURE_MAP_12 && CLASS_ID_TO_GESTURE_MAP_12[cid]) {
+          return CLASS_ID_TO_GESTURE_MAP_12[cid];
         }
       }
 

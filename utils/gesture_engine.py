@@ -77,6 +77,30 @@ class HandMotionTracker:
 
         return False, 0.0
 
+    def detect_vertical_motion(self) -> Tuple[bool, float]:
+        """
+        Detects repetitive vertical motion (e.g. Eat vs Food).
+        Returns (is_moving, intensity_score).
+        """
+        if len(self.wrist_history) < 10:
+            return False, 0.0
+
+        ys = [pt[1] for pt in self.wrist_history]
+        dys = np.diff(ys)
+
+        sign_changes = 0
+        for i in range(len(dys) - 1):
+            if dys[i] * dys[i + 1] < -1e-5 and abs(dys[i]) > 0.008:
+                sign_changes += 1
+
+        total_span_y = max(ys) - min(ys)
+
+        if sign_changes >= 2 and total_span_y > 0.05:
+            score = min(1.0, (sign_changes / 3.0) * (total_span_y / 0.10))
+            return True, score
+
+        return False, 0.0
+
 
 class GestureEngine:
     """
@@ -169,63 +193,30 @@ class GestureEngine:
     @staticmethod
     def analyze_finger_states(landmarks_norm: np.ndarray, raw_coords: np.ndarray) -> Dict[str, Any]:
         """
-        Analyzes individual fingers: extension state, curl, and relationships.
-        landmarks_norm: (21, 3) normalized coordinates.
-        raw_coords: (21, 3) raw MediaPipe screen coordinates.
+        Analyzes individual fingers: extension state, curl, and relationships
+        using robust geometric distances independent of screen rotation.
         """
         wrist = raw_coords[0]
+        
+        # Robust extension check: a finger is extended if its tip is further from the wrist than its PIP joint
+        def is_extended(tip_idx, pip_idx):
+            return np.linalg.norm(raw_coords[tip_idx] - wrist) > np.linalg.norm(raw_coords[pip_idx] - wrist)
 
-        # Fingertip and joint indices:
-        # Thumb: 1, 2, 3, 4 | Index: 5, 6, 7, 8 | Middle: 9, 10, 11, 12 | Ring: 13, 14, 15, 16 | Pinky: 17, 18, 19, 20
-        wrist = raw_coords[0]
-        palm_scale = max(0.04, float(np.linalg.norm(raw_coords[9] - wrist)))
-
-        # Distance-from-wrist invariant extension check
-        index_dist_tip = np.linalg.norm(raw_coords[8] - wrist)
-        index_dist_pip = np.linalg.norm(raw_coords[6] - wrist)
-        index_ext = bool(index_dist_tip > index_dist_pip * 1.05 or (raw_coords[8][1] < raw_coords[6][1]))
-
-        middle_dist_tip = np.linalg.norm(raw_coords[12] - wrist)
-        middle_dist_pip = np.linalg.norm(raw_coords[10] - wrist)
-        middle_ext = bool(middle_dist_tip > middle_dist_pip * 1.05 or (raw_coords[12][1] < raw_coords[10][1]))
-
-        ring_dist_tip = np.linalg.norm(raw_coords[16] - wrist)
-        ring_dist_pip = np.linalg.norm(raw_coords[14] - wrist)
-        ring_ext = bool(ring_dist_tip > ring_dist_pip * 1.05 or (raw_coords[16][1] < raw_coords[14][1]))
-
-        pinky_dist_tip = np.linalg.norm(raw_coords[20] - wrist)
-        pinky_dist_pip = np.linalg.norm(raw_coords[18] - wrist)
-        pinky_ext = bool(pinky_dist_tip > pinky_dist_pip * 1.05 or (raw_coords[20][1] < raw_coords[18][1]))
-
-        # Thumb analysis
-        thumb_tip = raw_coords[4]
-        thumb_mcp = raw_coords[2]
-
-        # Upward / Downward thumb relative to index base and MCP
-        thumb_up = bool(thumb_tip[1] < raw_coords[5][1] - 0.02 and thumb_tip[1] < thumb_mcp[1] - 0.02)
-        thumb_down = bool(thumb_tip[1] > raw_coords[5][1] + 0.04 and thumb_tip[1] > thumb_mcp[1] + 0.02)
-        thumb_tucked = bool(abs(thumb_tip[0] - raw_coords[9][0]) < 0.06 and abs(thumb_tip[1] - raw_coords[9][1]) < 0.08)
-
-        # Thumb extension distance relative to index MCP
-        dist_thumb_mcp = np.linalg.norm(thumb_tip - raw_coords[5])
-        thumb_ext = bool(dist_thumb_mcp > 0.10 or thumb_up or thumb_down)
+        index_ext = is_extended(8, 6)
+        middle_ext = is_extended(12, 10)
+        ring_ext = is_extended(16, 14)
+        pinky_ext = is_extended(20, 18)
 
         # Distances between fingertips
-        dist_thumb_index = float(np.linalg.norm(thumb_tip - raw_coords[8]))
+        dist_thumb_index = float(np.linalg.norm(raw_coords[4] - raw_coords[8]))
         dist_index_middle = float(np.linalg.norm(raw_coords[8] - raw_coords[12]))
         dist_middle_ring = float(np.linalg.norm(raw_coords[12] - raw_coords[16]))
-        dist_thumb_pinky = float(np.linalg.norm(thumb_tip - raw_coords[20]))
 
-        # All curled (fist) check
+        # All curled / extended checks (ignoring thumb for flexible fist/point)
         all_curled = bool(not index_ext and not middle_ext and not ring_ext and not pinky_ext)
         all_extended = bool(index_ext and middle_ext and ring_ext and pinky_ext)
 
         return {
-            "palm_scale": palm_scale,
-            "thumb_ext": thumb_ext,
-            "thumb_up": thumb_up,
-            "thumb_down": thumb_down,
-            "thumb_tucked": thumb_tucked,
             "index_ext": index_ext,
             "middle_ext": middle_ext,
             "ring_ext": ring_ext,
@@ -235,57 +226,34 @@ class GestureEngine:
             "dist_thumb_index": dist_thumb_index,
             "dist_index_middle": dist_index_middle,
             "dist_middle_ring": dist_middle_ring,
-            "dist_thumb_pinky": dist_thumb_pinky,
         }
 
-    def rule_based_classify(self, f: Dict[str, Any], raw_coords: np.ndarray) -> Tuple[str, float]:
+    def rule_based_classify(self, f: Dict[str, Any], raw_coords: np.ndarray) -> Tuple[Optional[str], float]:
         """
-        High-precision anatomical heuristic classifier for the 12 target classes:
-        HOME, NAMASTE, HELLO, THANK YOU, YES, NO, HELP, STOP, WATER, FOOD, PLEASE, GOOD.
+        High-precision anatomical heuristic classifier for core structural gestures.
+        Flexible handling of thumb position for POINT and FIST to prevent false negatives.
         """
-        # 1. GOOD (Thumbs Up): Thumb pointing up, 4 fingers curled
-        if f["thumb_up"] and f["all_curled"]:
-            return "GOOD", 0.96
-
-        # 2. HELP: Closed fist with thumb tucked into palm (Distress signal)
-        if f["all_curled"] and f["thumb_tucked"]:
-            return "HELP", 0.95
-
-        # 3. YES: Closed fist held firmly forward
+        # FIST: 4 fingers folded toward palm. Thumb flexible.
         if f["all_curled"]:
-            return "YES", 0.92
+            return "FIST", 0.95
 
-        # 4. WATER: 'W' handshape (Index, Middle, Ring extended, Pinky curled)
-        if f["index_ext"] and f["middle_ext"] and f["ring_ext"] and not f["pinky_ext"]:
-            return "WATER", 0.94
+        # POINT: Index extended, other 3 folded. Thumb flexible.
+        if f["index_ext"] and not f["middle_ext"] and not f["ring_ext"] and not f["pinky_ext"]:
+            return "POINT", 0.95
 
-        # 5. NO: Index & Middle extended together forward, Ring & Pinky curled
+        # PEACE: Index & Middle extended, Ring & Pinky folded.
         if f["index_ext"] and f["middle_ext"] and not f["ring_ext"] and not f["pinky_ext"]:
-            if f["dist_index_middle"] < 0.050:
-                return "NO", 0.93
-            else:
-                return "NO", 0.88
+            return "PEACE", 0.94
 
-        # 6. FOOD: Flattened 'O' pinch - all fingertips grouped tightly together
-        dist_tips_avg = (f["dist_thumb_index"] + f["dist_index_middle"] + f["dist_middle_ring"]) / 3.0
-        if dist_tips_avg < 0.055 and not f["all_curled"]:
-            return "FOOD", 0.93
-
-        # 7. STOP / HELLO / PLEASE / THANK YOU / NAMASTE: Extended hand postures
+        # OPEN PALM: All 4 fingers extended.
         if f["all_extended"]:
-            # Fingers tight together -> STOP
-            if f["dist_index_middle"] < 0.040 and f["dist_middle_ring"] < 0.040:
-                return "STOP", 0.94
-            # Upright flat prayer posture -> NAMASTE
-            elif abs(raw_coords[0][0] - 0.5) < 0.12 and f["dist_index_middle"] < 0.055:
-                return "NAMASTE", 0.91
-            # Fingers spread wide -> HELLO
-            elif f["dist_index_middle"] > 0.055:
-                return "HELLO", 0.92
-            else:
-                return "PLEASE", 0.90
+            return "OPEN PALM", 0.92
 
-        return "Gesture not recognized", 0.35
+        # ROCK ON: Index & Pinky extended, Middle & Ring folded.
+        if f["index_ext"] and not f["middle_ext"] and not f["ring_ext"] and f["pinky_ext"]:
+            return "ROCK ON", 0.94
+
+        return None, 0.0
 
     def process_hand(
         self,
@@ -322,8 +290,31 @@ class GestureEngine:
             }
 
         raw_coords = LandmarkProcessor.extract_raw_landmarks(hand_landmarks)
+        
+        # 1. Handle Handedness: Mirror Left hand to match Right hand (model trained on Right hand)
+        if handedness_label.upper() == "LEFT":
+            raw_coords[:, 0] = 1.0 - raw_coords[:, 0]
+
+        # 2. Aspect Ratio Correction (Camera gives normalized x, y, but pixels aren't square)
+        h, w = image_shape[:2]
+        if h > 0:
+            aspect_ratio = w / h
+            raw_coords[:, 0] *= aspect_ratio
+            # MediaPipe Z is roughly in the same scale as X, so scale it too
+            raw_coords[:, 2] *= aspect_ratio
+        
+        # Apply lightweight EMA smoothing to reduce jitter without making tracking laggy
+        if not hasattr(self, 'prev_raw_coords'):
+            self.prev_raw_coords = None
+
+        if self.prev_raw_coords is not None:
+            # 70% new, 30% old -> snappy but less jitter
+            raw_coords = 0.7 * raw_coords + 0.3 * self.prev_raw_coords
+        self.prev_raw_coords = raw_coords
+
         norm_coords = LandmarkProcessor.normalize_landmarks(raw_coords)
-        feat_vector = LandmarkProcessor.extract_feature_vector(hand_landmarks)
+        aux_features = LandmarkProcessor.compute_geometric_features(norm_coords)
+        feat_vector = np.concatenate([norm_coords.ravel(), aux_features])
 
         # Safeguard feature vector shape
         expected_n = getattr(self.model, "n_features_in_", 73) if self.model else 73
@@ -338,25 +329,37 @@ class GestureEngine:
         f_states = self.analyze_finger_states(norm_coords, raw_coords)
         is_dynamic = False
 
-        # 3. Machine Learning Model inference (Primary 42-Class Classifier)
+        # 3. Geometric / Heuristic Inference
+        heuristic_gesture, heuristic_conf = self.rule_based_classify(f_states, raw_coords)
+
+        # 4. Machine Learning Model inference
         ml_gesture = None
         ml_conf = 0.0
         class_id = -1
         raw_cls = None
-        if self.model is not None and self.label_encoder is not None:
+        
+        # Pre-empt ML model with robust heuristic if matched
+        if heuristic_gesture is not None:
+            ml_gesture = heuristic_gesture
+            ml_conf = heuristic_conf
+            # Also log for diagnostic
+            print(f"[HEURISTIC] Overriding ML with {heuristic_gesture} ({heuristic_conf:.2f})")
+        elif self.model is not None and self.label_encoder is not None:
             try:
                 probs = self.model.predict_proba([feat_vector])[0]
                 best_idx = int(np.argmax(probs))
                 ml_conf = float(probs[best_idx])
-                class_id = best_idx
                 
-                # Robust decode of prediction index or class name
                 if hasattr(self.model, "classes_"):
                     raw_cls = self.model.classes_[best_idx]
                 else:
                     raw_cls = best_idx
+                
+                class_id = int(raw_cls) if isinstance(raw_cls, (int, np.integer)) else raw_cls
 
-                if isinstance(raw_cls, (int, np.integer)):
+                if isinstance(raw_cls, str):
+                    candidate_name = raw_cls
+                elif isinstance(raw_cls, (int, np.integer)):
                     idx_val = int(raw_cls)
                     if hasattr(self.label_encoder, "classes_") and 0 <= idx_val < len(self.label_encoder.classes_):
                         candidate_name = self.label_encoder.classes_[idx_val]
@@ -373,6 +376,15 @@ class GestureEngine:
             except Exception as e:
                 ml_gesture = None
                 ml_conf = 0.0
+
+        # Motion-based overrides for similar static gestures
+        if ml_gesture == "FOOD":
+            is_vert, v_score = self.motion_tracker.detect_vertical_motion()
+            if is_vert:
+                ml_gesture = "EAT"
+                is_dynamic = True
+                ml_conf = max(ml_conf, 0.85 + (0.1 * v_score))
+                print(f"[DYNAMIC] Overriding FOOD with EAT (vert_score: {v_score:.2f})")
 
         infer_ms = (time.perf_counter() - t_start) * 1000
         self.last_inference_ms = infer_ms
@@ -443,15 +455,34 @@ class GestureEngine:
         else:
             stable_out = unknown_tag
 
-        # Safe diagnostic logging (throttled to avoid console spam)
-        logger.debug(f"Raw model prediction: {raw_cls}")
-        logger.debug(f"Predicted class/index: {class_id}")
-        logger.debug(f"Prediction confidence: {int(ml_conf * 100)}%")
-        logger.debug(f"Mapped gesture name: {ml_gesture}")
-        logger.debug(f"Final gesture displayed: {stable_out}")
-
         # Confidence categorization
         effective_conf = self.current_stable_confidence if self.current_stable_confidence > 0 else ml_conf
+
+        if stable_out not in (unknown_tag, "Unknown Gesture", "No hand detected", "STANDBY") and effective_conf < self.medium_threshold:
+            stable_out = "Hold gesture steady"
+
+        # Diagnostic telemetry logging
+        print("="*40)
+        print("DIAGNOSTICS - REAL RESULT")
+        print(f"Hand detected: YES ({handedness_label.upper()} HAND)")
+        print(f"Landmark count: {len(lms)} (expected 21)")
+        print(f"Feature-vector shape: {len(feat_vector)}")
+        print(f"Raw predicted class: '{cur_candidate}' | Confidence: {ml_conf:.2f}")
+        print(f"Stable predicted gesture: '{stable_out}' | Conf: {effective_conf:.2f}")
+        print(f"Actual model class count: {getattr(self.model, 'n_classes_', 'Unknown')}")
+        print(f"Video dimensions: {w}x{h} (AR: {w/h:.2f})")
+        print("="*40)
+        
+        logger.info("RAW PREDICTION:")
+        logger.info(f"- predicted class/index: {class_id}")
+        logger.info(f"- confidence: {ml_conf:.2f}")
+        logger.info(f"- mapped gesture name: {cur_candidate}")
+        
+        logger.info("FINAL PREDICTION:")
+        logger.info(f"- stabilized gesture: {stable_out}")
+        logger.info(f"- final gesture name: {stable_out}")
+        logger.info(f"- final confidence: {effective_conf:.2f}")
+
         if effective_conf >= self.high_threshold:
             conf_tier = "HIGH CONFIDENCE"
         elif effective_conf >= self.medium_threshold:
@@ -498,11 +529,14 @@ class GestureEngine:
         self.current_stable_confidence = 0.0
         self.last_valid_gesture = None
         self.last_valid_confidence = 0.0
+        self.last_confirmed_gesture = None
         no_hand_str = getattr(config, "NO_HAND_LABEL", "No hand detected")
         self.active_gesture = no_hand_str
         self.active_confidence = 0.0
         self.active_status = "No hand detected"
         self.handedness_str = "NONE"
+        if hasattr(self, 'prev_raw_coords'):
+            self.prev_raw_coords = None
 
     def process_frame(
         self,
@@ -624,26 +658,4 @@ class GestureEngine:
             "gesture_name": stable_gest,
             "class_id": hand_res.get("class_id", -1),
             "raw_prediction": hand_res.get("raw_prediction", unknown_str),
-            "raw_confidence": hand_res.get("raw_confidence", 0.0),
-            "raw_gesture": hand_res.get("raw_prediction", unknown_str),
-            "stable_gesture": stable_gest,
-            "confirmed_gesture": stable_gest,
-            "confidence": conf,
-            "confidence_tier": tier,
-            "is_confident": conf >= self.medium_threshold,
-            "status": hand_res.get("status", "Stable"),
-            "category": hand_res.get("category", "Sign Language"),
-            "motion_type": hand_res.get("motion_type", "STATIC GESTURE"),
-            "meaning": hand_res.get("meaning", ""),
-            "english": hand_res.get("english", stable_gest),
-            "kannada": hand_res.get("kannada", ""),
-            "kannada_translit": hand_res.get("kannada_translit", ""),
-            "spoken_phrase": hand_res.get("speech", stable_gest),
-            "is_emergency": hand_res.get("is_emergency", False),
-            "detected_hand_count": len(detected_hands),
-            "is_new_confirmation": is_new,
-            "hands_info": hands_info,
-            "inference_ms": hand_res.get("inference_ms", self.last_inference_ms),
-            "latency_sec": latency_sec
-        }
-
+            "raw_confidence": hand

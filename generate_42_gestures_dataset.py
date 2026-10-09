@@ -22,20 +22,24 @@ def create_landmark_mock(coords_21x3: np.ndarray):
     return SimpleNamespace(landmark=landmarks_list)
 
 
-def rotate_landmarks_z(coords: np.ndarray, angle_deg: float) -> np.ndarray:
-    """Rotates landmarks in the XY plane around wrist (landmark 0)."""
-    rad = math.radians(angle_deg)
-    cos_a, sin_a = math.cos(rad), math.sin(rad)
-    rot_matrix = np.array([
-        [cos_a, -sin_a, 0],
-        [sin_a,  cos_a, 0],
-        [0,      0,     1]
-    ], dtype=np.float32)
+def rotate_landmarks_3d(coords: np.ndarray, rx: float, ry: float, rz: float) -> np.ndarray:
+    """Rotates landmarks in 3D around wrist (landmark 0) to simulate perspective tilt."""
+    rx, ry, rz = math.radians(rx), math.radians(ry), math.radians(rz)
+    
+    cx, sx = math.cos(rx), math.sin(rx)
+    Rx = np.array([[1, 0, 0], [0, cx, -sx], [0, sx, cx]], dtype=np.float32)
+    
+    cy, sy = math.cos(ry), math.sin(ry)
+    Ry = np.array([[cy, 0, sy], [0, 1, 0], [-sy, 0, cy]], dtype=np.float32)
+    
+    cz, sz = math.cos(rz), math.sin(rz)
+    Rz = np.array([[cz, -sz, 0], [sz, cz, 0], [0, 0, 1]], dtype=np.float32)
+    
+    R = Rz @ Ry @ Rx
     wrist = coords[0]
     translated = coords - wrist
-    rotated = np.dot(translated, rot_matrix.T) + wrist
+    rotated = np.dot(translated, R.T) + wrist
     return rotated
-
 
 def get_base_skeleton(
     thumb_ext: float = 1.0,
@@ -90,7 +94,7 @@ def get_base_skeleton(
         lm[base_lm + 3] = [tip_x, tip_y, tip_z]
 
     if angle_offset != 0.0:
-        lm = rotate_landmarks_z(lm, angle_offset)
+        lm = rotate_landmarks_3d(lm, 0, 0, angle_offset)
 
     return lm
 
@@ -245,22 +249,24 @@ def build_template_for_gesture(gesture_name: str) -> np.ndarray:
 
 
 def generate_augmented_samples(base_template: np.ndarray, n_samples: int = 400) -> np.ndarray:
-    """Generates n augmented 73-dimensional invariant feature vectors."""
+    """Generates n augmented 73-dimensional invariant feature vectors with aggressive generalization noise."""
     vectors = []
-    angles = np.linspace(-18, 18, n_samples)
 
     for i in range(n_samples):
-        # 1. Subtle angle rotation
-        ang = float(angles[i] + np.random.normal(0, 1.5))
-        coords = rotate_landmarks_z(base_template, ang)
+        # 1. Aggressive 3D Rotation to simulate camera perspective and hand tilt
+        # Roll (-35 to +35), Pitch/Yaw (-15 to +15)
+        rz = np.random.uniform(-35, 35)
+        rx = np.random.normal(0, 8)
+        ry = np.random.normal(0, 8)
+        coords = rotate_landmarks_3d(base_template, rx, ry, rz)
 
-        # 2. Add realistic Gaussian joint jitter
-        noise = np.random.normal(0, 0.005, coords.shape).astype(np.float32)
-        noise[0] *= 0.1  # Keep wrist anchored
+        # 2. Add realistic Gaussian joint jitter (increased to prevent structural overfitting)
+        noise = np.random.normal(0, 0.015, coords.shape).astype(np.float32)
+        noise[0] *= 0.0  # Keep wrist perfectly anchored
         coords_jittered = coords + noise
 
         # 3. Random scale variation (distance invariant)
-        scale = np.random.uniform(0.85, 1.15)
+        scale = np.random.uniform(0.70, 1.30)
         wrist = coords_jittered[0]
         coords_scaled = (coords_jittered - wrist) * scale + wrist
 

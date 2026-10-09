@@ -40,7 +40,7 @@ Open a terminal in the project root folder and run:
 ```bash
 python app_web.py
 ```
-*(Leave this terminal running. It will start the server on http://127.0.0.1:5000)*
+*(Leave this terminal running. It will start the server on http://127.0.0.1:5001)*
 
 **Step 2: Start the Web Frontend**
 Open a SECOND terminal in the `frontend/` directory and run:
@@ -74,7 +74,7 @@ Vite will provide a URL (usually `http://localhost:5173/`). Open this exact URL 
 The system recognizes 42 distinct phrases and signs. You can view the full interactive dictionary by clicking **EXPLORE GESTURES** on the Home page, or navigating to the **GESTURES** tab.
 
 ## 10. Troubleshooting
-- **"AI model could not be reached"**: Ensure `python app_web.py` is currently running in a separate terminal, and there are no firewall blocks on port 5000.
+- **"AI model could not be reached"**: Ensure `python app_web.py` is currently running in a separate terminal, and there are no firewall blocks on port 5001.
 - **"Camera unavailable"**: Ensure no other application (like Zoom or OBS) is using the webcam.
 - **"Hand tracking could not be initialized"**: Ensure you have an active internet connection on the first run, as MediaPipe downloads WASM files from Google's CDN.
 

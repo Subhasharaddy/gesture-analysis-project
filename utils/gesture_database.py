@@ -607,6 +607,105 @@ GESTURE_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "is_dynamic": False,
         "is_emergency": False,
         "description": "Palm facing outward with fingers wiggling gently or held firm."
+    },
+    "EAT": {
+        "category": "Sign Language (ISL)",
+        "english": "Eat / Food",
+        "kannada": "ಊಟ",
+        "kannada_translit": "Oota",
+        "meaning": "Eating meal",
+        "speech": "Eat",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as FOOD gesture. Flattened 'O' handshape."
+    },
+    "SLEEP": {
+        "category": "Greeting",
+        "english": "Sleep",
+        "kannada": "ನಿದ್ದೆ",
+        "kannada_translit": "Nidde",
+        "meaning": "Going to sleep",
+        "speech": "Sleep.",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as GOOD NIGHT."
+    },
+    "COME HERE": {
+        "category": "Conversational Sign",
+        "english": "Come Here",
+        "kannada": "ಇಲ್ಲಿ ಬಾ",
+        "kannada_translit": "Illi baa",
+        "meaning": "Beckoning",
+        "speech": "Come here.",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as COME gesture."
+    },
+    "DANGER": {
+        "category": "Emergency Sign",
+        "english": "Danger",
+        "kannada": "ಅಪಾಯ",
+        "kannada_translit": "Apaaya",
+        "meaning": "Critical warning",
+        "speech": "Danger!",
+        "is_dynamic": False,
+        "is_emergency": True,
+        "description": "Same as EMERGENCY."
+    },
+    "VICTORY": {
+        "category": "Gesture",
+        "english": "Victory",
+        "kannada": "ಜಯ",
+        "kannada_translit": "Jaya",
+        "meaning": "Winning",
+        "speech": "Victory!",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as PEACE gesture."
+    },
+    "ROCK ON": {
+        "category": "Gesture",
+        "english": "Rock On",
+        "kannada": "ರಾಕ್ ಆನ್",
+        "kannada_translit": "Rock on",
+        "meaning": "Rock on symbol",
+        "speech": "Rock on!",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Index and pinky fingers extended, middle and ring fingers curled, thumb over middle fingers."
+    },
+    "CLOSED FIST": {
+        "category": "Gesture",
+        "english": "Closed Fist",
+        "kannada": "ಮುಷ್ಟಿ",
+        "kannada_translit": "Mushti",
+        "meaning": "Closed Fist",
+        "speech": "Fist.",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as FIST."
+    },
+    "INDEX FINGER POINT": {
+        "category": "Gesture",
+        "english": "Index Finger Point",
+        "kannada": "ನಿರ್ದೇಶನ",
+        "kannada_translit": "Nirdeshana",
+        "meaning": "Pointing",
+        "speech": "Point.",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as POINT."
+    },
+    "PEACE SIGN": {
+        "category": "Gesture",
+        "english": "Peace Sign",
+        "kannada": "ಶಾಂತಿ",
+        "kannada_translit": "Shanti",
+        "meaning": "Peace",
+        "speech": "Peace.",
+        "is_dynamic": False,
+        "is_emergency": False,
+        "description": "Same as PEACE."
     }
 }
 

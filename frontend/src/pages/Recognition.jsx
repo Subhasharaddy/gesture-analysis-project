@@ -8,6 +8,20 @@ export default function Recognition() {
   const cameraActiveRef = useRef(false);
   const [errorMsg, setErrorMsg] = useState(null);
   const [status, setStatus] = useState("INITIALIZING");
+  const [currentGesture, setCurrentGesture] = useState("");
+  const [animateEmoji, setAnimateEmoji] = useState(false);
+  
+  const GESTURE_EMOJIS = {
+    "OPEN PALM": "🖐️", "CLOSED FIST": "✊", "INDEX FINGER POINT": "☝️", "PEACE SIGN": "✌️",
+    "THUMBS UP": "👍", "BAD": "👎", "BYE": "👋", "CALL FOR HELP": "🆘", "COME": "🫴",
+    "DOCTOR": "🩺", "EMERGENCY": "🚨", "FIST": "✊", "FOOD": "🍎", "FRIEND": "🤝",
+    "GO": "👉", "GOOD": "👍", "GOOD NIGHT": "🌙", "HELLO": "👋", "HELP": "🙋",
+    "I / ME": "👈", "LOVE": "🤟", "I AM FINE": "👌", "NAMASTE": "🙏", "PHONE": "🤙",
+    "STOP": "✋", "WAIT": "✋", "YES": "✊", "NO": "🙅", "THANK YOU": "🙏",
+    "PLEASE": "🤲", "SORRY": "🥺", "WELCOME": "🤗", "WATER": "💧", "EAT": "🍽️",
+    "SLEEP": "😴", "HOME": "🏠", "COME HERE": "👋", "DANGER": "⚠️", "VICTORY": "✌️",
+    "ROCK ON": "🤘", "POINT": "☝️", "PEACE": "✌️"
+  };
   
   const [prediction, setPrediction] = useState({
     gesture: "No hand detected",
@@ -16,7 +30,7 @@ export default function Recognition() {
     kannada: "",
     meaning: ""
   });
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [voiceStatus, setVoiceStatus] = useState("READY");
   
   const [devices, setDevices] = useState([]);
@@ -26,7 +40,18 @@ export default function Recognition() {
   const lastVideoTimeRef = useRef(-1);
   const requestRef = useRef(null);
   const streamRef = useRef(null);
+  const isPredictingRef = useRef(false);
+  const lastSpokenSignRef = useRef(null);
   
+  useEffect(() => {
+    if (prediction.gesture_name && prediction.gesture_name !== currentGesture) {
+      setCurrentGesture(prediction.gesture_name);
+      setAnimateEmoji(true);
+      const timer = setTimeout(() => setAnimateEmoji(false), 300);
+      return () => clearTimeout(timer);
+    }
+  }, [prediction.gesture_name, currentGesture]);
+
   const fetchCameras = async () => {
     try {
       const devicesInfo = await navigator.mediaDevices.enumerateDevices();
@@ -123,15 +148,17 @@ export default function Recognition() {
 
   const speakGesture = (text) => {
     if (!voiceEnabled || !window.speechSynthesis) return;
-    setVoiceStatus("SPEAKING...");
-    
-    // Cancel any ongoing speech so it doesn't queue up massively
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.onend = () => setVoiceStatus("READY");
-    utterance.onerror = () => setVoiceStatus("ERROR");
-    window.speechSynthesis.speak(utterance);
+    try {
+      window.speechSynthesis.cancel(); // Cancel any ongoing stale speech
+      setVoiceStatus("SPEAKING...");
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.onend = () => setVoiceStatus("READY");
+      utterance.onerror = () => setVoiceStatus("READY");
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.error("Speech synthesis error:", err);
+      setVoiceStatus("ERROR");
+    }
   };
 
   const testVoice = () => {
@@ -160,7 +187,8 @@ export default function Recognition() {
       const ctx = canvas.getContext("2d");
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       
-      if (results.landmarks && results.landmarks.length > 0) {
+      const hasHands = results.landmarks && results.landmarks.length > 0;
+      if (hasHands) {
         // Draw landmarks
         for (const landmarks of results.landmarks) {
           drawConnectors(ctx, landmarks, [
@@ -172,45 +200,59 @@ export default function Recognition() {
           ], {color: '#22d3ee', lineWidth: 2});
           drawLandmarks(ctx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 3});
         }
-        
-        // Send to Backend
+      }
+
+      // Send to Backend (with in-flight guard to eliminate request race conditions and UI jitter)
+      if (!isPredictingRef.current) {
+        isPredictingRef.current = true;
         try {
-          const handsData = results.landmarks.map((lms, idx) => ({
-            label: results.handednesses[idx][0].categoryName,
+          const handsData = hasHands ? results.landmarks.map((lms, idx) => ({
+            label: results.handednesses?.[idx]?.[0]?.categoryName || "Right",
             landmarks: lms.map(lm => ({ x: lm.x, y: lm.y, z: lm.z }))
-          }));
-          
-          const response = await fetch("http://127.0.0.1:5000/api/predict", {
+          })) : [];
+
+          const response = await fetch("http://localhost:5001/api/predict", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ hands: handsData })
+            body: JSON.stringify({ 
+              hands: handsData,
+              image_shape: [video.videoHeight, video.videoWidth]
+            })
           });
           const data = await response.json();
           const stableName = data.gesture_name || data.gesture || "No hand detected";
-          
-          setPrediction({
-            ...data,
-            gesture: stableName,
-            gesture_name: stableName
-          });
-          
-          if (data.is_new_confirmation && stableName && stableName !== "No hand detected" && stableName !== "Unknown Gesture" && stableName !== "STANDBY" && stableName !== "Detecting...") {
-            speakGesture(stableName);
+
+          if (stableName && stableName !== "No hand detected" && stableName !== "Detecting..." && stableName !== "Unknown Gesture") {
+            setPrediction({
+              ...data,
+              gesture: stableName,
+              gesture_name: stableName
+            });
+
+            // Trigger speech once per stable gesture switch
+            if (stableName !== lastSpokenSignRef.current) {
+              lastSpokenSignRef.current = stableName;
+              speakGesture(data.spoken_phrase || stableName);
+            }
+          } else {
+            // Handle "No hand detected", "Detecting...", "Unknown Gesture"
+            if (stableName === "No hand detected") {
+              lastSpokenSignRef.current = null;
+            }
+            setPrediction(p => ({
+              ...p,
+              ...data,
+              gesture: stableName,
+              gesture_name: stableName,
+              confidence: data.confidence || 0
+            }));
           }
-          
         } catch (err) {
           console.error("Backend API Error:", err);
           setErrorMsg("AI model could not be reached (Is Python backend running?).");
+        } finally {
+          isPredictingRef.current = false;
         }
-      } else {
-        setPrediction(p => ({
-          ...p,
-          gesture: "No hand detected",
-          gesture_name: "No hand detected",
-          confidence: 0,
-          kannada: "",
-          meaning: ""
-        }));
       }
     }
     
@@ -219,7 +261,6 @@ export default function Recognition() {
     }
   };
 
-  // Helpers for drawing
   const drawConnectors = (ctx, landmarks, edges, style) => {
     ctx.save();
     ctx.strokeStyle = style.color;
@@ -228,8 +269,8 @@ export default function Recognition() {
       const p1 = landmarks[edge[0]];
       const p2 = landmarks[edge[1]];
       ctx.beginPath();
-      ctx.moveTo(p1.x * ctx.canvas.width, p1.y * ctx.canvas.width);
-      ctx.lineTo(p2.x * ctx.canvas.width, p2.y * ctx.canvas.width);
+      ctx.moveTo(p1.x * ctx.canvas.width, p1.y * ctx.canvas.height);
+      ctx.lineTo(p2.x * ctx.canvas.width, p2.y * ctx.canvas.height);
       ctx.stroke();
     }
     ctx.restore();
@@ -240,7 +281,7 @@ export default function Recognition() {
     ctx.fillStyle = style.color;
     for (const lm of landmarks) {
       ctx.beginPath();
-      ctx.arc(lm.x * ctx.canvas.width, lm.y * ctx.canvas.width, style.radius, 0, 2 * Math.PI);
+      ctx.arc(lm.x * ctx.canvas.width, lm.y * ctx.canvas.height, style.radius, 0, 2 * Math.PI);
       ctx.fill();
     }
     ctx.restore();
@@ -277,7 +318,7 @@ export default function Recognition() {
           />
           <canvas 
             ref={canvasRef} 
-            className="absolute inset-0 w-full h-full pointer-events-none" 
+            className="absolute inset-0 w-full h-full object-cover pointer-events-none" 
             width={640} height={480}
             style={{ transform: "scaleX(-1)", display: cameraActive ? "block" : "none" }}
           />
@@ -330,11 +371,19 @@ export default function Recognition() {
           
           <div className="my-6 text-center">
             <div className="text-sm text-gray-500 mb-1">GESTURE</div>
-            <div className={`text-4xl font-black ${prediction.gesture_name && prediction.gesture_name !== "No hand detected" ? "text-white glow-text" : "text-gray-600"}`}>
+            <div className={`text-4xl font-black transition-opacity duration-300 ${prediction.gesture_name && prediction.gesture_name !== "No hand detected" && prediction.gesture_name !== "Hold gesture steady" ? "text-white glow-text" : "text-gray-600"}`}>
               {prediction.gesture_name || prediction.gesture || "No hand detected"}
             </div>
+            
             {prediction.kannada && (
               <div className="text-xl text-emerald-400 mt-2 font-bold">{prediction.kannada}</div>
+            )}
+            
+            {/* Gesture Emoji Visualization */}
+            {prediction.gesture_name && prediction.gesture_name !== "No hand detected" && prediction.gesture_name !== "Hold gesture steady" && prediction.gesture_name !== "Detecting..." && prediction.gesture_name !== "Unknown Gesture" && (
+              <div className={`text-7xl mt-6 transition-transform duration-300 ease-out ${animateEmoji ? 'scale-125' : 'scale-100'}`}>
+                {GESTURE_EMOJIS[prediction.gesture_name] || "✨"}
+              </div>
             )}
           </div>
           

@@ -6,7 +6,7 @@ export default function Gestures() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch("http://127.0.0.1:5000/api/gestures")
+    fetch("http://localhost:5001/api/gestures")
       .then(res => res.json())
       .then(data => {
         setGestures(data);

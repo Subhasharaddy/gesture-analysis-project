@@ -39,6 +39,12 @@ class TextToSpeechWorker:
         """Dedicated thread executing TTS synthesis using pyttsx3."""
         engine = None
         try:
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except ImportError:
+                pass
+            
             import pyttsx3
             # Initialize SAPI5 on Windows
             engine = pyttsx3.init()
@@ -96,32 +102,41 @@ class TextToSpeechWorker:
             is_emergency: Whether this is an urgent emergency sign
             force: If True, bypasses cooldown checks
         """
+        if not gesture_name or gesture_name in ("No hand detected", "Detecting...", "STANDBY", "Unknown Gesture"):
+            return
+
         now = time.time()
-        phrase = self.speech_map.get(gesture_name, gesture_name)
+        clean_name = str(gesture_name).strip().upper()
+        phrase = self.speech_map.get(clean_name, self.speech_map.get(gesture_name, gesture_name))
 
-        with self._lock:
-            # Rule 1: Allow immediately if sign changed
-            sign_changed = (gesture_name != self._last_spoken_sign)
-            # Rule 2: Allow if cooldown elapsed
-            cooldown_passed = (now - self._last_spoken_time >= self.cooldown_seconds)
+        try:
+            with self._lock:
+                # Rule 1: Allow immediately if sign changed
+                sign_changed = (clean_name != self._last_spoken_sign)
+                # Rule 2: Remove cooldown for non-emergency repetitive speech
+                # We only speak once per new gesture, unless forced or emergency
 
-            if force or is_emergency or sign_changed or cooldown_passed:
-                self._last_spoken_sign = gesture_name
-                self._last_spoken_time = now
+                if force or is_emergency or sign_changed:
+                    self._last_spoken_sign = clean_name
+                    self._last_spoken_time = now
 
-                # If emergency, clear backlog so emergency is spoken without delay
-                if is_emergency:
-                    while not self._queue.empty():
-                        try:
-                            self._queue.get_nowait()
-                            self._queue.task_done()
-                        except (queue.Empty, ValueError):
-                            break
+                    # Clear backlog so emergency OR new gestures are spoken without delay
+                    # and old stale gestures are discarded
+                    if is_emergency or sign_changed:
+                        while not self._queue.empty():
+                            try:
+                                self._queue.get_nowait()
+                                self._queue.task_done()
+                            except (queue.Empty, ValueError):
+                                break
 
-                try:
-                    self._queue.put_nowait((phrase, is_emergency))
-                except queue.Full:
-                    logger.warning("TTS queue full; dropping frame utterance.")
+                    logger.info(f"[TTS_DISPATCH] Speaking gesture='{clean_name}' | phrase='{phrase}' (emergency={is_emergency}, changed={sign_changed})")
+                    try:
+                        self._queue.put_nowait((phrase, is_emergency))
+                    except queue.Full:
+                        logger.warning("TTS queue full; dropping frame utterance.")
+        except Exception as e:
+            logger.error(f"[TTS_ERROR] Failed to queue speech for '{gesture_name}': {e}", exc_info=True)
 
     def stop(self):
         """Stops the worker thread cleanly."""
